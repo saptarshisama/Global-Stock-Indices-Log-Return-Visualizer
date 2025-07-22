@@ -1,0 +1,1 @@
+# Global-Stock-Indices-Log-Return-Visualizer
