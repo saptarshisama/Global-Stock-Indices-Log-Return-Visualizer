@@ -4,6 +4,7 @@ This Python script fetches **daily historical data** for major **global stock in
 
 It helps you quickly compare the performance of various world markets in 2025—answering the question: _Which country or asset performed the best this year?_
 
+<img width="1920" height="967" alt="Figure_1" src="https://github.com/user-attachments/assets/cfc9091b-56cc-4167-b1c0-0161661aafaf" />
 ---
 
 ## 🔍 What It Does
@@ -68,5 +69,5 @@ Copy
 Edit
 python indices_log_return_plot.py
 
-<img width="1920" height="967" alt="Figure_1" src="https://github.com/user-attachments/assets/cfc9091b-56cc-4167-b1c0-0161661aafaf" />
+
 
