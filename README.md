@@ -23,20 +23,24 @@ It answers a simple but powerful question:
 
 ## Markets Covered
 
-- S&P 500 (USA)  
-- Nifty 50 (India)  
-- MOEX Index (Russia)  
-- SSE Composite Index (China)  
-- Nikkei 225 (Japan)  
-- DAX 40 (Germany)  
-- FTSE 100 (UK)  
-- CAC 40 (France)  
-- TSX Composite (Canada)  
-- Bovespa (Brazil)  
-- ASX 200 (Australia)  
-- KOSPI (South Korea)  
-- Hang Seng Index (Hong Kong)  
-- BTC/USD (Bitcoin)  
+- 🇷🇺 **MOEX Index (Russia)** — `IMOEX.ME`  
+- 🇮🇳 **Nifty 50 (India)** — `^NSEI`  
+- 🇺🇸 **S&P 500 (USA)** — `^GSPC`  
+- 🇭🇰 **Hang Seng Index (Hong Kong)** — `^HSI`  
+- 🇨🇳 **SSE Composite Index (China)** — `000001.SS`  
+- 🇯🇵 **Nikkei 225 (Japan)** — `^N225`  
+- ₿ **BTC/USD (Bitcoin)** — `BTC-USD`  
+- 🇩🇪 **DAX 40 (Germany)** — `^GDAXI`  
+- 🇬🇧 **FTSE 100 (UK)** — `^FTSE`  
+- 🇫🇷 **CAC 40 (France)** — `^FCHI`  
+- 🇨🇦 **TSX Composite (Canada)** — `^GSPTSE`  
+- 🇧🇷 **Bovespa (Brazil)** — `^BVSP`  
+- 🇦🇺 **ASX 200 (Australia)** — `^AXJO`  
+- 🇰🇷 **KOSPI (South Korea)** — `^KS11`  
+- 🇸🇦 **Tadawul All Shares Index (Saudi Arabia)** — `^TASI.SR`  
+- 🇸🇬 **STI Index (Singapore)** — `^STI`  
+- 🇲🇾 **FTSE Bursa KLCI (Malaysia)** — `^KLSE`  
+
 
 ---
 
