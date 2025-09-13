@@ -20,16 +20,18 @@ def plot_indices_log_returns():
         'TSX Composite (Canada)': '^GSPTSE',
         'Bovespa (Brazil)': '^BVSP',
         'ASX 200 (Australia)': '^AXJO',
-        'KOSPI (South Korea)': '^KS11'
+        'KOSPI (South Korea)': '^KS11',
+        'Tadawul All Shares Index (Saudi Arabia': "^TASI.SR",
+        'STI Index (Singapore)': "^STI",
+        'FTSE Bursa KLCI (Malaysia)': "^KLSE"
     }
-
     end_date = datetime.today().strftime('%Y-%m-%d')
     data = {}
     failed_tickers = []
 
     for name, ticker in indices.items():
         try:
-            df = yf.Ticker(ticker).history(start='2025-01-01', end=end_date)
+            df = yf.Ticker(ticker).history(start='2025-07-01', end=end_date)
             if not df.empty:
                 data[name] = df
             else:
