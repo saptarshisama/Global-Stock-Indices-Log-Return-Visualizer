@@ -6,3 +6,7 @@ env/
 .idea/
 .vscode/
 .DS_Store
+
+# Windows: "--out /dev/null" lands here
+nul
+nul.png
