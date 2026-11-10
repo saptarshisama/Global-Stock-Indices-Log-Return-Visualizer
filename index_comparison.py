@@ -117,6 +117,15 @@ THEMES = {
         "grid": "#2c2c2a",
         "axis": "#383835",
         "hues": {"blue": "#3987e5", "orange": "#d95926", "aqua": "#199e70"},
+        # Light -> dark steps of each region hue, for telling individual
+        # indices apart inside a region panel. Each trio validates as an
+        # ordinal ramp against this surface (monotone lightness, visible step
+        # gaps, dark end still clearing the surface).
+        "ramps": {
+            "blue": ["#9ec5f4", "#3987e5", "#184f95"],
+            "orange": ["#f5b394", "#d95926", "#8a3514"],
+            "aqua": ["#7fdcb8", "#199e70", "#0a5436"],
+        },
     },
     "light": {
         "surface": "#fcfcfb",
@@ -126,8 +135,24 @@ THEMES = {
         "grid": "#e1e0d9",
         "axis": "#c3c2b7",
         "hues": {"blue": "#2a78d6", "orange": "#eb6834", "aqua": "#1baf7a"},
+        "ramps": {
+            "blue": ["#6da7ec", "#2a78d6", "#184f95"],
+            "orange": ["#e07a4a", "#c44a1c", "#8a3514"],
+            "aqua": ["#36c08a", "#149066", "#0a5a3d"],
+        },
     },
 }
+
+# Within a region panel, each index gets its own (lightness step, dash) pair.
+# Two channels rather than one: 3 steps x 3 dashes = 9 styles, which covers the
+# largest region, and a reader who cannot separate the lightness steps can still
+# separate solid from dashed from dotted.
+PANEL_DASHES = [(), (5, 2), (1, 1.6)]
+
+
+def panel_style(rank: int, ramp: list[str]) -> tuple[str, tuple]:
+    """Colour + dash for the rank-th index inside a region panel."""
+    return ramp[rank % len(ramp)], PANEL_DASHES[(rank // len(ramp)) % 3]
 
 
 @dataclass
@@ -378,7 +403,7 @@ def _fmt(v, suffix="%", width=8, dp=2, signed=True):
     return f"{v:>{sign}{width}.{dp}f}{suffix}"
 
 
-def print_table(ranked, by_region=False):
+def print_table(ranked, region_order=False):
     """The table view: every value, with the stats the chart can't show.
 
     The chart labels only the extremes, so this is where the rest of the numbers
@@ -421,25 +446,27 @@ def print_table(ranked, by_region=False):
     print(f"Ret/Vol = return per unit of volatility (not a Sharpe ratio)."
           f"  * = best in its region.")
 
-    if by_region:
-        # Grouped: each region's own ranking, leader first.
+    # One table, every market, best to worst. The Region and In-rgn columns
+    # carry the grouping, so splitting this into five tables would only make
+    # the overall ranking harder to read.
+    print()
+    print(head)
+    print(rule)
+    for i, s in enumerate(ranked, 1):
+        print(row(i, s))
+
+    if region_order:
+        # Compact per-region ordering, for reading a single region's ranking
+        # without scanning the full list.
+        print()
         for r in REGION_ORDER:
-            members = [s for s in ranked if s.region == r]
+            members = sorted([s for s in ranked if s.region == r],
+                             key=lambda x: x.final_log, reverse=True)
             if not members:
                 continue
-            members.sort(key=lambda x: x.final_log, reverse=True)
-            print(f"\n{r.upper()}  ({len(members)} market"
-                  f"{'s' if len(members) != 1 else ''})")
-            print(head)
-            print(rule)
-            for i, s in enumerate(members, 1):
-                print(row(i, s))
-    else:
-        print()
-        print(head)
-        print(rule)
-        for i, s in enumerate(ranked, 1):
-            print(row(i, s))
+            order = "  >  ".join(f"{s.name.split(' (')[0]} {s.pct:+.1f}%"
+                                 for s in members)
+            print(f"{r:<9} {order}")
 
     # Region summary: the one-line answer to "which region is winning".
     print(f"\n{'REGION':<10}  {'Markets':>7}  {'Median':>9}  {'Best':>9}  "
@@ -460,12 +487,16 @@ def print_table(ranked, by_region=False):
 
 def plot_by_region(series, start, end, theme="dark", out=None, show=True,
                    currency_note=False, title=None, usd=False):
-    """Small multiples: one panel per region, every index labelled.
+    """Small multiples: one panel per region, every index individually styled.
 
-    The combined chart answers "how do regions compare"; this answers "who leads
-    inside each region", which 23 lines on one axis cannot show. Panels share
-    both axes so heights are directly comparable across regions — the whole
-    point of the layout, and the reason not to let each panel autoscale.
+    This is the default view. It answers "who leads inside each region", which
+    23 lines on one axis cannot show; --combined gives the single-axis chart
+    for "how do the regions compare".
+
+    Each index gets its own shade and dash within its region's hue, so a curve
+    can be matched to a name. Panels are scaled per region and print their own
+    range, since one shared scale stretched to Asia's spread flattened the
+    other regions into unreadable bands.
     """
     if not series:
         print("No data fetched — nothing to plot.")
@@ -474,40 +505,50 @@ def plot_by_region(series, start, end, theme="dark", out=None, show=True,
     t = THEMES[theme]
     present = [r for r in REGION_ORDER if any(s.region == r for s in series)]
     n = len(present)
-    # Prefer a layout that leaves the fewest empty cells: 5 regions in 3 columns
-    # strands two panels on a sparse second row, where 2 columns fills evenly.
-    ncol = 1 if n == 1 else (2 if n <= 2 else min(3, n))
-    if n % ncol and n % 2 == 0:
-        ncol = 2
+    # Two columns: each panel needs a legend column beside it, which three
+    # panels per row cannot fit without squeezing the plots to nothing.
+    ncol = 1 if n == 1 else 2
     nrow = -(-n // ncol)  # ceil
 
     # Extra height for the figure header so it never lands on a panel title.
     header_in = 1.15
+    # Shared x (one timeline) but independent y: a shared y-scale stretched to
+    # Asia's +/-80% squashed Americas and Europe into a thin band near zero,
+    # hiding the within-region detail these panels exist to show. Each panel's
+    # own range is printed in its title so cross-region comparison is still
+    # possible by reading, not by eyeballing equal heights.
     fig, axes = plt.subplots(nrow, ncol,
-                             figsize=(15, header_in + 3.6 * nrow),
-                             facecolor=t["surface"], sharex=True, sharey=True,
+                             figsize=(16, header_in + 3.1 * nrow),
+                             facecolor=t["surface"], sharex=True, sharey=False,
                              squeeze=False)
     flat = [a for row in axes for a in row]
-
-    allv = np.concatenate([s.cum_log for s in series]) * 100.0
-    pad = (allv.max() - allv.min()) * 0.08 or 1.0
-    ylim = (allv.min() - pad, allv.max() + pad)
 
     for ax, region in zip(flat, present):
         ax.set_facecolor(t["surface"])
         members = sorted([s for s in series if s.region == region],
                          key=lambda x: x.final_log, reverse=True)
-        hue_key, dashes = REGION_STYLE[region]
-        colour = t["hues"][hue_key]
 
-        # Within a panel the region hue is fixed, so rank is carried by
-        # opacity and weight: the leader is opaque and thick, the rest recede.
+        # Scale to this region, always including zero so the baseline means
+        # the same thing in every panel.
+        pv = np.concatenate([s.cum_log for s in members]) * 100.0
+        lo, hi = min(pv.min(), 0.0), max(pv.max(), 0.0)
+        pad = (hi - lo) * 0.12 or 1.0
+        ylim = (lo - pad, hi + pad)
+        hue_key, _ = REGION_STYLE[region]
+        ramp = t["ramps"][hue_key]
+
+        # Each index gets its own shade + dash within the region's hue, so a
+        # curve can actually be matched to its name. The region still reads as
+        # one colour family across panels.
+        styles = []
         for i, s in enumerate(members):
+            colour, dashes = panel_style(i, ramp)
+            styles.append((colour, dashes))
             lead = i == 0
             line, = ax.plot(
                 s.index, s.cum_log * 100.0, color=colour,
-                linewidth=2.4 if lead else 1.3,
-                alpha=1.0 if lead else max(0.32, 0.78 - i * 0.07),
+                linewidth=2.4 if lead else 1.5,
+                alpha=1.0 if lead else 0.95,
                 solid_capstyle="round", zorder=3 if lead else 2,
             )
             if dashes:
@@ -516,50 +557,38 @@ def plot_by_region(series, start, end, theme="dark", out=None, show=True,
         ax.axhline(0, color=t["axis"], linewidth=0.9, zorder=1)
         ax.set_ylim(*ylim)
 
-        # Every index named, ranked, with its return — readable because a panel
-        # holds at most nine lines instead of twenty-three.
+        # A real legend, not a text block: each row carries that index's own
+        # colour and dash, so a curve can be matched to its name. A plain list
+        # named the members but left every line looking identical.
         #
-        # Place the list in the emptiest corner, measured rather than assumed:
-        # score each of the four corners by how many plotted points fall inside
-        # it, and take the lowest. Anchoring to a fixed corner collided with
-        # Asia's curves, which fill both vertical halves.
-        xs = np.concatenate([mdates.date2num(s.index) for s in members])
-        ys = np.concatenate([s.cum_log * 100.0 for s in members])
-        x0, x1 = xs.min(), xs.max()
-        xfrac = (xs - x0) / (x1 - x0) if x1 > x0 else np.zeros_like(xs)
-        yfrac = ((ys - ylim[0]) / (ylim[1] - ylim[0])
-                 if ylim[1] > ylim[0] else np.zeros_like(ys))
+        # It sits in a reserved column to the right of the plot rather than
+        # inside it. Hunting for an empty corner worked until the box grew to
+        # nine rows, at which point Asia's panel had no gap big enough.
+        handles = []
+        for (colour, dashes), s in zip(styles, members):
+            h = Line2D([], [], color=colour, linewidth=2.2,
+                       solid_capstyle="round",
+                       label=f"{s.name.split(' (')[0]}  {s.pct:+.1f}%")
+            if dashes:
+                h.set_dashes(dashes)
+            handles.append(h)
 
-        # Corner boxes sized to the label block: wide enough for the names,
-        # tall enough for one row per member.
-        bw = 0.46
-        bh = min(0.17 + 0.062 * len(members), 0.62)
-        corners = [
-            (0.985, 0.97, "right", "top", (1 - bw, 1.0), (1 - bh, 1.0)),
-            (0.985, 0.03, "right", "bottom", (1 - bw, 1.0), (0.0, bh)),
-            (0.015, 0.97, "left", "top", (0.0, bw), (1 - bh, 1.0)),
-            (0.015, 0.03, "left", "bottom", (0.0, bw), (0.0, bh)),
-        ]
-        best_corner, best_hits = corners[0], None
-        for c in corners:
-            _, _, _, _, (xa, xb), (ya, yb) = c
-            hits = int(np.sum((xfrac >= xa) & (xfrac <= xb) &
-                              (yfrac >= ya) & (yfrac <= yb)))
-            if best_hits is None or hits < best_hits:
-                best_corner, best_hits = c, hits
-        ax_x, ax_y, ha, va, _, _ = best_corner
+        leg = ax.legend(
+            handles=handles, loc="upper left", bbox_to_anchor=(1.015, 1.0),
+            fontsize=7.8, labelcolor=t["ink_soft"], frameon=False,
+            handlelength=2.3, handletextpad=0.6, labelspacing=0.5,
+            borderpad=0.0, borderaxespad=0.0,
+        )
+        leg.set_zorder(5)
 
-        lines = [f"{i}. {s.name.split(' (')[0]}  {s.pct:+.1f}%"
-                 for i, s in enumerate(members, 1)]
-        ax.text(ax_x, ax_y, "\n".join(lines), transform=ax.transAxes,
-                va=va, ha=ha, fontsize=7.6, linespacing=1.55,
-                color=t["ink_soft"], zorder=5,
-                bbox=dict(boxstyle="round,pad=0.5", facecolor=t["surface"],
-                          edgecolor=t["grid"], linewidth=0.6, alpha=0.93))
-
+        # Each panel has its own y-scale, so the spread belongs in the title:
+        # it is what makes two panels comparable without equal heights.
         med = float(np.median([s.pct for s in members]))
+        spread = (f"   ·   best {members[0].pct:+.1f}% "
+                  f"to worst {members[-1].pct:+.1f}%") if len(members) > 1 else ""
         ax.set_title(f"{region}   ·   {len(members)} market"
-                     f"{'s' if len(members) != 1 else ''}   ·   median {med:+.1f}%",
+                     f"{'s' if len(members) != 1 else ''}   ·   "
+                     f"median {med:+.1f}%{spread}",
                      fontsize=10.5, color=t["ink"], loc="left", pad=8)
 
         ax.grid(True, axis="y", color=t["grid"], linewidth=0.7)
@@ -579,15 +608,15 @@ def plot_by_region(series, start, end, theme="dark", out=None, show=True,
 
     # Header sits in its own reserved band, measured in inches so it holds at
     # any panel count.
-    fig_h = header_in + 3.6 * nrow
+    fig_h = header_in + 3.1 * nrow
     basis = "in USD" if usd else "in Local Currency"
     fig.text(0.055, 1 - 0.42 / fig_h,
              title or f"Cumulative Log Returns by Region, {basis}",
              fontsize=16, color=t["ink"], fontweight="semibold",
              va="center", ha="left")
     fig.text(0.055, 1 - 0.72 / fig_h,
-             f"{start} to {end}   ·   shared axes, so panel heights compare "
-             f"directly   ·   leader highlighted in each region",
+             f"{start} to {end}   ·   each panel scaled to its own region "
+             f"(range in the panel title)   ·   ranked best to worst",
              fontsize=9, color=t["muted"], va="center", ha="left")
 
     if currency_note:
@@ -597,10 +626,11 @@ def plot_by_region(series, start, end, theme="dark", out=None, show=True,
         fig.text(0.055, 0.14 / fig_h, note, fontsize=8, color=t["muted"],
                  va="center", style="italic")
 
-    fig.subplots_adjust(left=0.055, right=0.985,
+    # wspace leaves the gap each panel's legend column occupies.
+    fig.subplots_adjust(left=0.05, right=0.84,
                         top=1 - header_in / fig_h,
                         bottom=0.42 / fig_h,
-                        hspace=0.28, wspace=0.07)
+                        hspace=0.32, wspace=0.42)
 
     if out:
         fig.savefig(out, dpi=120, facecolor=t["surface"])
@@ -795,14 +825,14 @@ def main(argv=None):
     p.add_argument("--currency-note", action="store_true",
                    help="stamp the currency-basis caveat on the figure")
     p.add_argument("--title", help="override the chart title")
-    p.add_argument("--by-region", action="store_true",
-                   help="small multiples: one panel per region with every index "
-                        "labelled, instead of all markets on one axis")
+    p.add_argument("--combined", action="store_true",
+                   help="all markets on one axis instead of per-region panels")
     p.add_argument("--region", action="append", metavar="NAME",
                    help=f"chart only this region (repeatable). "
                         f"One of: {', '.join(REGION_ORDER)}")
     p.add_argument("--label-count", type=int, default=3, metavar="N",
-                   help="direct-label the top and bottom N markets (default: 3)")
+                   help="with --combined, direct-label the top and bottom N "
+                        "markets (default: 3)")
     p.add_argument("--no-table", action="store_true",
                    help="skip the ranked table printed after the chart")
     p.add_argument("--quiet", action="store_true", help="suppress progress output")
@@ -851,11 +881,16 @@ def main(argv=None):
     if not args.quiet and series:
         print(f"\nFetched {len(series)} of {len(universe)}.")
 
+    # Per-region panels are the default view: they answer "who leads where"
+    # without the reader needing to know any flags. --combined restores the
+    # all-on-one-axis chart.
+    panels = not args.combined
+
     if series and not args.no_table:
         print_table(sorted(series, key=lambda s: s.final_log, reverse=True),
-                    by_region=args.by_region)
+                    region_order=panels)
 
-    if args.by_region:
+    if panels:
         plot_by_region(series, start, end, theme=args.theme, out=args.out,
                        show=not args.no_show,
                        currency_note=args.currency_note,

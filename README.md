@@ -1,8 +1,43 @@
 # Global Stock Indices — Log Return Visualizer
 
-Compares the **cumulative log returns** of 23 major world equity indices, plus Bitcoin as a cross-asset benchmark, over any date window — ranked best to worst, in local currency or converted to USD.
+Compares the **cumulative log returns** of 23 major world equity indices, plus Bitcoin as a cross-asset benchmark — ranked best to worst, grouped by region, in local currency or converted to USD.
 
-![Cumulative log returns of global indices, 2026 year to date](assets/chart-dark.png)
+## Just run it
+
+```bash
+pip install -r requirements.txt
+python index_comparison.py
+```
+
+No arguments needed. That gives you **year to date**, one panel per region with every index individually coloured, and the full ranked table printed to the terminal.
+
+![One panel per region, every index individually coloured and labelled](assets/chart-by-region.png)
+
+Every index gets its own shade and dash inside its region's colour, so you can match any curve to a name in the legend beside it. Each panel is scaled to its own region and prints its range in the title — one shared scale stretched to Asia's ±80% flattened the other regions into unreadable bands.
+
+And the table, printed every run, all 23 markets best to worst:
+
+```
+  #  Market                         Region      In-rgn     Return       Vol      MaxDD   Ret/Vol   Bars
+---  -----------------------------  ---------  -------  ---------  --------  ---------  --------  -----
+  1  TAIEX (Taiwan)                 Asia          1/9*    +41.95%      30.3%    -20.31%     +1.38    204
+  2  KOSPI (South Korea)            Asia           2/9    +16.46%      60.6%    -44.94%     +0.27    208
+  3  TSX Composite (Canada)         Americas      1/6*    +14.31%      14.3%     -9.33%     +1.00    215
+  ...
+ 23  Jakarta Composite (Indonesia)  Asia           9/9    -42.00%      31.4%    -46.31%     -1.34    204
+```
+
+### The three flags worth remembering
+
+Everything else has a sensible default. These are the ones that change the answer:
+
+```bash
+python index_comparison.py --usd          # compare on one currency basis
+python index_comparison.py --period 1y    # 1m, 3m, 6m, 1y, ytd
+python index_comparison.py --region Asia  # just one region, full size
+```
+
+`python index_comparison.py --help` lists the rest.
 
 ---
 
@@ -35,44 +70,48 @@ Both modes name their basis in the chart title, because the two are otherwise vi
 
 ---
 
-## The chart
+## Design decisions
 
-<img src="assets/chart-light.png" alt="The same chart rendered in the light theme" width="100%">
+The light theme (`--theme light`), same default view:
 
-Design decisions that are doing real work:
+<img src="assets/chart-light.png" alt="The per-region view rendered in the light theme" width="100%">
+
+Decisions that are doing real work:
 
 - **Colour encodes region, not rank.** Lines are grouped Americas / Europe / Asia / Oceania / Crypto, so regional clustering is visible at a glance — that is the actual story in the data, and colouring by rank would have wasted the channel on information the y-position already carries.
 - **Composite encoding — hue × line style.** Five regions is one class more than colour alone can carry safely. The three hues used are the only trio that clears the all-pairs colour-vision gate in both themes (worst-case CVD ΔE 9.4 dark / 9.2 light); adding a fourth or fifth hue drops some pair to ΔE ≈ 1.9, which is indistinguishable to a protanope. So the last two regions reuse hues and separate by dash pattern. **The encoding therefore survives colourblindness and black-and-white printing.**
-- **Only the extremes are labelled on the combined chart.** With 23 markets, most finish within a few percent of each other; direct-labelling all of them produces a wall of text with crossing leader lines that cannot be traced back to a line. The leaders and laggards get callouts (`--label-count N`), the full ranking goes to the printed table, and `--by-region` / `--region` label every index once there are few enough to do so legibly.
-- **Panel labels are placed, not guessed.** In `--by-region`, each panel's index list goes in whichever corner contains the fewest plotted points, measured per panel. A fixed corner collided with Asia's curves, which fill both vertical halves.
+- **Only the extremes are labelled on the combined chart.** With 23 markets on one axis, most finish within a few percent of each other; direct-labelling all of them produces a wall of text with crossing leader lines that cannot be traced back to a line. There the leaders and laggards get callouts (`--label-count N`) and the table carries the rest. The default per-region view labels every index, because a panel holds at most nine lines.
+- **Within a panel, each index has its own shade *and* dash.** Two channels, not one: three lightness steps × three dash patterns gives nine distinct styles, enough for the largest region. A reader who can't separate the shades can still separate solid from dashed from dotted, so the encoding survives colourblindness and black-and-white printing. Every lightness ramp is validated as an ordinal scale against its own surface, not eyeballed.
+- **Panels are scaled per region, with the range in the title.** A shared y-scale is the textbook choice for small multiples, and it was wrong here: stretched to Asia's +42%/−42% spread, the Americas and Europe collapsed into thin bands near zero and the within-region detail — the thing these panels exist to show — disappeared. Each panel now uses its full height and states its range, so comparison happens by reading rather than by eyeballing equal heights.
+- **Legends sit beside their panel, not inside it.** Placing the key in whichever corner had the fewest points worked until a region had nine entries; Asia's panel then had no gap big enough. A reserved column cannot collide at all.
 - **The peak is named.** The highest point on the chart draws the eye first. If it belongs to a line that ends far below it, the reader has no way to identify it — so it is annotated where it peaks.
 - **Both themes are selected, not flipped.** The light and dark hues are separate steps validated against their own surface, not an automatic inversion.
 
 ---
 
-## Comparing individual markets
+## The other views
 
-The combined chart shows how regions move together. To compare *countries* — who leads inside each region, who is actually outperforming — there are three views.
-
-### `--by-region`: small multiples
-
-One panel per region, every index named and ranked with its return. Panels share both axes, so their heights compare directly: Americas and Europe are visibly tight bands while Asia sprawls from +42% to −42%.
-
-![One panel per region, each index labelled](assets/chart-by-region.png)
-
-```bash
-python index_comparison.py --by-region
-```
+The default is per-region panels. Two alternatives:
 
 ### `--region`: drill into one
 
-Charts a single region full-size, and because there are few enough lines, **every index gets its own end label** instead of just the top and bottom three.
+Charts a single region full-size, and because there are few enough lines, **every index gets its own end label**.
 
 ```bash
 python index_comparison.py --region Asia
 ```
 
 Repeatable and case-insensitive, so `--region asia --region europe` compares two regions head to head.
+
+### `--combined`: all 23 on one axis
+
+The original view. Best for seeing how whole regions move together rather than who leads within one — colour groups by region, and only the global leaders and laggards are labelled.
+
+![All markets on one axis, coloured by region](assets/chart-dark.png)
+
+```bash
+python index_comparison.py --combined
+```
 
 ### The key table
 
@@ -101,7 +140,14 @@ Two things this surfaces that the ranking hides:
 - **KOSPI's +16.5% came with 60.6% volatility and a −44.9% drawdown** (Ret/Vol 0.27). TSX earned a similar +14.3% at 14.3% vol (Ret/Vol 1.00). Same ballpark return, very different ride.
 - **Within Europe, IBEX edges SMI on return** (+12.86% vs +12.82%) but SMI did it at 12.8% vol against IBEX's 17.6%.
 
-`--by-region` groups the table by region with per-region rankings. A region summary always prints last:
+In the default view a one-line pecking order per region also prints, for reading a single region without scanning all 23 rows:
+
+```
+Americas  TSX Composite +14.3%  >  IPC +12.0%  >  S&P 500 +10.1%  >  Nasdaq Composite +8.7%  >  ...
+Europe    IBEX 35 +12.9%  >  SMI +12.8%  >  FTSE 100 +8.4%  >  DAX 40 +7.0%  >  ...
+```
+
+And a region summary always prints last:
 
 ```
 REGION      Markets     Median       Best  Leader
@@ -125,55 +171,39 @@ pip install -r requirements.txt
 
 Requires Python 3.9+ (builtin generic annotations). Verified on 3.10.
 
-## Usage
+## All the options
 
-```bash
-python index_comparison.py
-```
-
-Year to date by default, dark theme, opens a window and prints the ranked table.
-
-```bash
-python index_comparison.py --period 1y --theme light
-```
-
-```bash
-python index_comparison.py --start 2026-01-01 --end 2026-11-10 --out chart.png --no-show
-```
-
-Saves a PNG without opening a window — use this on a server or in CI.
-
-### Options
+You don't need these to use it — `python index_comparison.py` is the intended entry point. This is the reference.
 
 | Flag | Description |
 |---|---|
-| `--start YYYY-MM-DD` | Start date. Overrides `--period`. |
-| `--end YYYY-MM-DD` | End date. Defaults to today. |
 | `--period {1m,3m,6m,1y,ytd}` | Window relative to `--end`. Default `ytd`. |
+| `--start YYYY-MM-DD` | Exact start date. Overrides `--period`. |
+| `--end YYYY-MM-DD` | End date. Defaults to today. |
+| `--usd` | Convert every index to USD at daily spot rates before computing returns. |
+| `--region NAME` | Chart only this region. Repeatable, case-insensitive. |
+| `--combined` | All markets on one axis instead of per-region panels. |
 | `--theme {dark,light}` | Default `dark`. |
 | `--out PATH` | Save the chart to this path. |
-| `--no-show` | Don't open a window (switches to the Agg backend). |
-| `--usd` | Convert every index to USD at daily spot rates before computing returns. |
+| `--no-show` | Don't open a window (switches to the Agg backend). Use on a server or in CI. |
 | `--currency-note` | Stamp the currency-basis caveat on the figure. |
 | `--title TEXT` | Override the chart title. |
-| `--by-region` | Small multiples: one panel per region, every index labelled. Also groups the table. |
-| `--region NAME` | Chart only this region. Repeatable, case-insensitive. |
-| `--label-count N` | Direct-label the top and bottom N markets. Default 3; `0` draws no end labels. Lifted automatically when `--region` narrows the set. |
-| `--no-table` | Skip the ranked table. |
+| `--label-count N` | With `--combined`, direct-label the top and bottom N markets. Default 3; `0` draws none. |
+| `--no-table` | Skip the printed table. |
 | `--quiet` | Suppress per-ticker progress output. |
 
 The screenshots above are reproducible:
 
 ```bash
-python index_comparison.py --period ytd --end 2026-11-10 --theme dark --out assets/chart-dark.png --no-show --currency-note
+python index_comparison.py --period ytd --end 2026-11-10 --out assets/chart-by-region.png --no-show --currency-note
 ```
 
 ```bash
-python index_comparison.py --period ytd --end 2026-11-10 --usd --theme dark --out assets/chart-usd-dark.png --no-show --currency-note
+python index_comparison.py --period ytd --end 2026-11-10 --combined --out assets/chart-dark.png --no-show --currency-note
 ```
 
 ```bash
-python index_comparison.py --period ytd --end 2026-11-10 --by-region --out assets/chart-by-region.png --no-show --currency-note
+python index_comparison.py --period ytd --end 2026-11-10 --combined --usd --out assets/chart-usd-dark.png --no-show --currency-note
 ```
 
 ---
