@@ -42,8 +42,10 @@ except ImportError:  # pragma: no cover - dependency guard
 # --------------------------------------------------------------------------
 # Universe
 # --------------------------------------------------------------------------
-# Each entry is display name -> (Yahoo Finance ticker, region).
+# Each entry is display name -> (Yahoo Finance ticker, region, quote currency).
 # Region drives the colour/line-style encoding, so it is data, not decoration.
+# Currency drives --usd conversion; every value below was confirmed against the
+# `currency` field Yahoo reports for that ticker, not assumed from the country.
 #
 # Deliberately excluded, do not re-add without changing the data source:
 #   MOEX Index (Russia) 'IMOEX.ME'  — Yahoo stopped serving this after the 2022
@@ -51,38 +53,42 @@ except ImportError:  # pragma: no cover - dependency guard
 #   Tadawul All Shares (Saudi) '^TASI.SR' — same symptom, returns zero rows for
 #       every window tested. Needs the Tadawul site or another vendor.
 # Both would otherwise fail silently into the "failed" list on every run.
-INDICES: dict[str, tuple[str, str]] = {
+INDICES: dict[str, tuple[str, str, str]] = {
     # Americas
-    "S&P 500 (USA)": ("^GSPC", "Americas"),
-    "Nasdaq Composite (USA)": ("^IXIC", "Americas"),
-    "Dow Jones (USA)": ("^DJI", "Americas"),
-    "TSX Composite (Canada)": ("^GSPTSE", "Americas"),
-    "Bovespa (Brazil)": ("^BVSP", "Americas"),
-    "IPC (Mexico)": ("^MXX", "Americas"),
+    "S&P 500 (USA)": ("^GSPC", "Americas", "USD"),
+    "Nasdaq Composite (USA)": ("^IXIC", "Americas", "USD"),
+    "Dow Jones (USA)": ("^DJI", "Americas", "USD"),
+    "TSX Composite (Canada)": ("^GSPTSE", "Americas", "CAD"),
+    "Bovespa (Brazil)": ("^BVSP", "Americas", "BRL"),
+    "IPC (Mexico)": ("^MXX", "Americas", "MXN"),
     # Europe
-    "DAX 40 (Germany)": ("^GDAXI", "Europe"),
-    "FTSE 100 (UK)": ("^FTSE", "Europe"),
-    "CAC 40 (France)": ("^FCHI", "Europe"),
-    "Euro Stoxx 50 (Eurozone)": ("^STOXX50E", "Europe"),
-    "SMI (Switzerland)": ("^SSMI", "Europe"),
-    "IBEX 35 (Spain)": ("^IBEX", "Europe"),
+    "DAX 40 (Germany)": ("^GDAXI", "Europe", "EUR"),
+    "FTSE 100 (UK)": ("^FTSE", "Europe", "GBP"),
+    "CAC 40 (France)": ("^FCHI", "Europe", "EUR"),
+    "Euro Stoxx 50 (Eurozone)": ("^STOXX50E", "Europe", "EUR"),
+    "SMI (Switzerland)": ("^SSMI", "Europe", "CHF"),
+    "IBEX 35 (Spain)": ("^IBEX", "Europe", "EUR"),
     # Asia
-    "Nifty 50 (India)": ("^NSEI", "Asia"),
-    "Hang Seng (Hong Kong)": ("^HSI", "Asia"),
-    "SSE Composite (China)": ("000001.SS", "Asia"),
-    "Nikkei 225 (Japan)": ("^N225", "Asia"),
-    "KOSPI (South Korea)": ("^KS11", "Asia"),
-    "TAIEX (Taiwan)": ("^TWII", "Asia"),
-    "Jakarta Composite (Indonesia)": ("^JKSE", "Asia"),
-    "STI (Singapore)": ("^STI", "Asia"),
-    "FTSE Bursa KLCI (Malaysia)": ("^KLSE", "Asia"),
+    "Nifty 50 (India)": ("^NSEI", "Asia", "INR"),
+    "Hang Seng (Hong Kong)": ("^HSI", "Asia", "HKD"),
+    "SSE Composite (China)": ("000001.SS", "Asia", "CNY"),
+    "Nikkei 225 (Japan)": ("^N225", "Asia", "JPY"),
+    "KOSPI (South Korea)": ("^KS11", "Asia", "KRW"),
+    "TAIEX (Taiwan)": ("^TWII", "Asia", "TWD"),
+    "Jakarta Composite (Indonesia)": ("^JKSE", "Asia", "IDR"),
+    "STI (Singapore)": ("^STI", "Asia", "SGD"),
+    "FTSE Bursa KLCI (Malaysia)": ("^KLSE", "Asia", "MYR"),
     # Oceania
-    "ASX 200 (Australia)": ("^AXJO", "Oceania"),
-    # Crypto benchmark
-    "BTC/USD (Bitcoin)": ("BTC-USD", "Crypto"),
+    "ASX 200 (Australia)": ("^AXJO", "Oceania", "AUD"),
+    # Crypto benchmark — already quoted in USD
+    "BTC/USD (Bitcoin)": ("BTC-USD", "Crypto", "USD"),
 }
 
 REGION_ORDER = ["Americas", "Europe", "Asia", "Oceania", "Crypto"]
+
+# Yahoo FX convention: "XXXUSD=X" quotes 1 XXX in USD, so converting a
+# local-currency level to USD is a multiplication. USD needs no pair.
+FX_SUFFIX = "USD=X"
 
 # Composite encoding: hue x line style.
 #
@@ -133,6 +139,7 @@ class Series:
     region: str
     index: object  # DatetimeIndex
     cum_log: np.ndarray  # cumulative log return, in log units
+    currency: str = "USD"  # the currency this path is measured in
 
     @property
     def final_log(self) -> float:
@@ -188,33 +195,94 @@ def resolve_window(args) -> tuple[str, str]:
     return start_dt.strftime("%Y-%m-%d"), end
 
 
-def fetch(indices, start, end, quiet=False):
-    """Download each ticker; return (list[Series], list[(name, ticker, reason)])."""
+def _close_series(ticker, start, end):
+    """Fetch one ticker's adjusted close. Returns (series, None) or (None, reason)."""
+    try:
+        df = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=True)
+    except Exception as exc:  # network / parse / symbol errors
+        return None, type(exc).__name__
+    close = df["Close"].dropna() if "Close" in df else None
+    if close is None or len(close) < 2:
+        return None, "no price data"
+    return close, None
+
+
+def fetch_fx(currencies, start, end, quiet=False):
+    """Fetch USD conversion rates. Returns ({currency: series}, [(cur, reason)]).
+
+    Yahoo quotes these as "1 unit of XXX = N USD", so a local price level is
+    converted by multiplying. USD maps to None and is never fetched.
+    """
+    rates, failed = {}, []
+    needed = sorted(c for c in set(currencies) if c != "USD")
+    for i, cur in enumerate(needed, 1):
+        pair = f"{cur}{FX_SUFFIX}"
+        if not quiet:
+            print(f"  [{i:>2}/{len(needed)}] FX {cur}->USD  {pair:<12}",
+                  end="", flush=True)
+        close, reason = _close_series(pair, start, end)
+        if close is None:
+            failed.append((cur, reason))
+            if not quiet:
+                print(f"  {reason}")
+            continue
+        rates[cur] = close
+        if not quiet:
+            print(f"  {len(close):>4} bars")
+    return rates, failed
+
+
+def fetch(indices, start, end, quiet=False, to_usd=False, fx=None):
+    """Download each ticker; return (list[Series], list[(name, ticker, reason)]).
+
+    With to_usd, each index level is converted to USD *before* returns are
+    computed. Converting the level is exact; summing index and FX returns
+    afterwards would only approximate it, and would drift over long windows.
+    """
     out, failed = [], []
     total = len(indices)
-    for i, (name, (ticker, region)) in enumerate(indices.items(), 1):
+    fx = fx or {}
+    for i, (name, (ticker, region, currency)) in enumerate(indices.items(), 1):
         if not quiet:
             print(f"  [{i:>2}/{total}] {name:<32} {ticker:<12}", end="", flush=True)
-        try:
-            df = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=True)
-        except Exception as exc:  # network / parse / symbol errors
-            failed.append((name, ticker, type(exc).__name__))
+
+        close, reason = _close_series(ticker, start, end)
+        if close is None:
+            failed.append((name, ticker, reason))
             if not quiet:
-                print("  error")
+                print(f"  {reason}")
             continue
 
-        close = df["Close"].dropna() if "Close" in df else None
-        if close is None or len(close) < 2:
-            failed.append((name, ticker, "no price data"))
-            if not quiet:
-                print("  no data")
-            continue
+        measured_in = currency
+        if to_usd and currency != "USD":
+            rate = fx.get(currency)
+            if rate is None:
+                failed.append((name, ticker, f"no {currency}->USD rate"))
+                if not quiet:
+                    print(f"  no {currency} rate")
+                continue
+            # Align on the index's own trading days; FX and equity calendars
+            # differ (FX trades on local market holidays and vice versa), so
+            # reindex onto the price dates and carry the last known rate
+            # forward. Any leading gap is dropped rather than back-filled, so a
+            # rate is never invented before the first quote.
+            aligned = rate.reindex(close.index.union(rate.index)).ffill()
+            aligned = aligned.reindex(close.index)
+            usd_close = (close * aligned).dropna()
+            if len(usd_close) < 2:
+                failed.append((name, ticker, f"no overlap with {currency} rate"))
+                if not quiet:
+                    print("  no FX overlap")
+                continue
+            close = usd_close
+            measured_in = "USD"
 
         # log(P_t / P_{t-1}), first day anchored at 0, then compounded.
         log_ret = np.log(close / close.shift(1)).fillna(0.0).cumsum()
         out.append(
             Series(name=name, ticker=ticker, region=region,
-                   index=log_ret.index, cum_log=log_ret.to_numpy(dtype=float))
+                   index=log_ret.index, cum_log=log_ret.to_numpy(dtype=float),
+                   currency=measured_in)
         )
         if not quiet:
             print(f"  {len(close):>4} bars")
@@ -268,14 +336,15 @@ def print_table(ranked):
     of the numbers live — and it keeps the output readable without colour.
     """
     width = max(len(s.name) for s in ranked)
-    print(f"\n{'#':>3}  {'Market':<{width}}  {'Region':<9}  {'Return':>9}")
+    basis = "USD" if all(s.currency == "USD" for s in ranked) else "local"
+    print(f"\n{'#':>3}  {'Market':<{width}}  {'Region':<9}  {'Return':>9}  ({basis})")
     print(f"{'-' * 3}  {'-' * width}  {'-' * 9}  {'-' * 9}")
     for i, s in enumerate(ranked, 1):
         print(f"{i:>3}  {s.name:<{width}}  {s.region:<9}  {s.pct:>+8.2f}%")
 
 
 def plot(series, start, end, theme="dark", out=None, show=True,
-         currency_note=False, title=None, n_label=3):
+         currency_note=False, title=None, n_label=3, usd=False):
     if not series:
         print("No data fetched — nothing to plot.")
         return
@@ -381,7 +450,12 @@ def plot(series, start, end, theme="dark", out=None, show=True,
                   fontsize=10, color=t["ink_soft"], labelpad=10)
 
     # --- titles -----------------------------------------------------------
-    fig.text(0.055, 0.955, title or "Cumulative Log Returns — Global Indices",
+    # The currency basis goes in the title, not a footnote: the two modes are
+    # otherwise visually identical, and mistaking one for the other misreads
+    # every number on the chart.
+    basis = "in USD" if usd else "in Local Currency"
+    fig.text(0.055, 0.955,
+             title or f"Cumulative Log Returns — Global Indices, {basis}",
              fontsize=17, color=t["ink"], fontweight="semibold", va="bottom")
     sub = (f"{start} to {end}   ·   {len(ranked)} markets   ·   "
            f"best {best.pct:+.1f}% {best.name.split(' (')[0]}   ·   "
@@ -389,9 +463,12 @@ def plot(series, start, end, theme="dark", out=None, show=True,
     fig.text(0.055, 0.925, sub, fontsize=9.5, color=t["muted"], va="bottom")
 
     if currency_note:
-        fig.text(0.055, 0.025,
-                 "Each index is in its own local currency — this is local-currency "
-                 "performance, not the return to a single foreign investor.",
+        note = ("Converted to USD at daily spot rates, so returns include "
+                "currency moves — this is what a USD-based investor earned."
+                if usd else
+                "Each index is in its own local currency — this is local-currency "
+                "performance, not the return to a single foreign investor.")
+        fig.text(0.055, 0.025, note,
                  fontsize=8, color=t["muted"], va="bottom", style="italic")
 
     # --- region key -------------------------------------------------------
@@ -437,8 +514,11 @@ def main(argv=None):
     p.add_argument("--out", help="save the chart to this path (e.g. chart.png)")
     p.add_argument("--no-show", action="store_true",
                    help="don't open a window (useful with --out on a server)")
+    p.add_argument("--usd", action="store_true",
+                   help="convert every index to USD before computing returns, "
+                        "so all markets are compared on one currency basis")
     p.add_argument("--currency-note", action="store_true",
-                   help="stamp the local-currency caveat on the figure")
+                   help="stamp the currency-basis caveat on the figure")
     p.add_argument("--title", help="override the chart title")
     p.add_argument("--label-count", type=int, default=3, metavar="N",
                    help="direct-label the top and bottom N markets (default: 3)")
@@ -454,10 +534,20 @@ def main(argv=None):
         raise SystemExit("--label-count must be 0 or greater.")
 
     start, end = resolve_window(args)
+
+    fx, fx_failed = {}, []
+    if args.usd:
+        currencies = [c for _, _, c in INDICES.values()]
+        if not args.quiet:
+            n = len({c for c in currencies if c != "USD"})
+            print(f"Fetching {n} FX rates  ({start} -> {end})")
+        fx, fx_failed = fetch_fx(currencies, start, end, quiet=args.quiet)
+
     if not args.quiet:
         print(f"Fetching {len(INDICES)} tickers  ({start} -> {end})")
 
-    series, failed = fetch(INDICES, start, end, quiet=args.quiet)
+    series, failed = fetch(INDICES, start, end, quiet=args.quiet,
+                           to_usd=args.usd, fx=fx)
 
     if not args.quiet and series:
         print(f"\nFetched {len(series)} of {len(INDICES)}.")
@@ -467,7 +557,12 @@ def main(argv=None):
 
     plot(series, start, end, theme=args.theme, out=args.out,
          show=not args.no_show, currency_note=args.currency_note,
-         title=args.title, n_label=args.label_count)
+         title=args.title, n_label=args.label_count, usd=args.usd)
+
+    if fx_failed:
+        print("\nFX rates unavailable:")
+        for cur, reason in fx_failed:
+            print(f"  - {cur}->USD: {reason}")
 
     if failed:
         print("\nFailed to fetch:")
