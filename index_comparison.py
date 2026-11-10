@@ -150,6 +150,47 @@ class Series:
         """Total simple return, in percent."""
         return (np.exp(self.final_log) - 1.0) * 100.0
 
+    @property
+    def daily_log(self) -> np.ndarray:
+        """Day-over-day log returns (day 1 anchored at 0)."""
+        return np.diff(self.cum_log, prepend=0.0)
+
+    @property
+    def vol(self) -> float:
+        """Annualised volatility, in percent.
+
+        Standard deviation of daily log returns scaled by sqrt(252). This is a
+        comparability aid, not a risk model: it assumes roughly 252 trading days
+        and says nothing about fat tails.
+        """
+        d = self.daily_log
+        if len(d) < 3:
+            return float("nan")
+        return float(d.std(ddof=1) * np.sqrt(252) * 100.0)
+
+    @property
+    def max_drawdown(self) -> float:
+        """Worst peak-to-trough fall over the window, in percent (negative)."""
+        level = np.exp(self.cum_log)
+        peak = np.maximum.accumulate(level)
+        return float((level / peak - 1.0).min() * 100.0)
+
+    @property
+    def return_per_vol(self) -> float:
+        """Total return divided by annualised volatility.
+
+        A crude risk-adjusted ranking: how much return each unit of wobble
+        bought. Not a Sharpe ratio — there is no risk-free rate here.
+        """
+        v = self.vol
+        if not np.isfinite(v) or v == 0:
+            return float("nan")
+        return self.pct / v
+
+    @property
+    def bars(self) -> int:
+        return len(self.cum_log)
+
 
 # --------------------------------------------------------------------------
 # Data
@@ -329,18 +370,245 @@ def declutter(values, min_gap):
 # --------------------------------------------------------------------------
 # Plot
 # --------------------------------------------------------------------------
-def print_table(ranked):
-    """The table view: every value, in rank order.
+def _fmt(v, suffix="%", width=8, dp=2, signed=True):
+    """Format a float that may be NaN, right-aligned."""
+    if not np.isfinite(v):
+        return f"{'n/a':>{width}}"
+    sign = "+" if signed else ""
+    return f"{v:>{sign}{width}.{dp}f}{suffix}"
 
-    The chart deliberately labels only the extremes, so this is where the rest
-    of the numbers live — and it keeps the output readable without colour.
+
+def print_table(ranked, by_region=False):
+    """The table view: every value, with the stats the chart can't show.
+
+    The chart labels only the extremes, so this is where the rest of the numbers
+    live — and it is the readable-without-colour view.
+
+    Columns beyond return exist to answer "who is actually outperforming":
+    a market can top the return ranking while taking far more risk to get there,
+    which vol and drawdown expose and raw return hides.
     """
+    if not ranked:
+        return
+
     width = max(len(s.name) for s in ranked)
-    basis = "USD" if all(s.currency == "USD" for s in ranked) else "local"
-    print(f"\n{'#':>3}  {'Market':<{width}}  {'Region':<9}  {'Return':>9}  ({basis})")
-    print(f"{'-' * 3}  {'-' * width}  {'-' * 9}  {'-' * 9}")
-    for i, s in enumerate(ranked, 1):
-        print(f"{i:>3}  {s.name:<{width}}  {s.region:<9}  {s.pct:>+8.2f}%")
+    basis = "USD" if all(s.currency == "USD" for s in ranked) else "local ccy"
+
+    # Rank within each region, so "best in Europe" is readable directly.
+    region_rank = {}
+    for r in REGION_ORDER:
+        members = [s for s in ranked if s.region == r]
+        for i, s in enumerate(sorted(members, key=lambda x: x.final_log,
+                                     reverse=True), 1):
+            region_rank[s.name] = (i, len(members))
+
+    head = (f"{'#':>3}  {'Market':<{width}}  {'Region':<9}  {'In-rgn':>7}  "
+            f"{'Return':>9}  {'Vol':>8}  {'MaxDD':>9}  {'Ret/Vol':>8}  {'Bars':>5}")
+    rule = (f"{'-' * 3}  {'-' * width}  {'-' * 9}  {'-' * 7}  "
+            f"{'-' * 9}  {'-' * 8}  {'-' * 9}  {'-' * 8}  {'-' * 5}")
+
+    def row(i, s):
+        rr, rn = region_rank.get(s.name, (0, 0))
+        tag = f"{rr}/{rn}" + ("*" if rr == 1 and rn > 1 else "")
+        return (f"{i:>3}  {s.name:<{width}}  {s.region:<9}  {tag:>7}  "
+                f"{_fmt(s.pct)}  {_fmt(s.vol, dp=1, signed=False)}  "
+                f"{_fmt(s.max_drawdown)}  "
+                f"{_fmt(s.return_per_vol, suffix='', dp=2)}  {s.bars:>5}")
+
+    print(f"\nReturns measured in {basis}."
+          f"  Vol = annualised stdev of daily log returns."
+          f"  MaxDD = worst peak-to-trough fall.")
+    print(f"Ret/Vol = return per unit of volatility (not a Sharpe ratio)."
+          f"  * = best in its region.")
+
+    if by_region:
+        # Grouped: each region's own ranking, leader first.
+        for r in REGION_ORDER:
+            members = [s for s in ranked if s.region == r]
+            if not members:
+                continue
+            members.sort(key=lambda x: x.final_log, reverse=True)
+            print(f"\n{r.upper()}  ({len(members)} market"
+                  f"{'s' if len(members) != 1 else ''})")
+            print(head)
+            print(rule)
+            for i, s in enumerate(members, 1):
+                print(row(i, s))
+    else:
+        print()
+        print(head)
+        print(rule)
+        for i, s in enumerate(ranked, 1):
+            print(row(i, s))
+
+    # Region summary: the one-line answer to "which region is winning".
+    print(f"\n{'REGION':<10}  {'Markets':>7}  {'Median':>9}  {'Best':>9}  "
+          f"{'Leader':<28}")
+    print(f"{'-' * 10}  {'-' * 7}  {'-' * 9}  {'-' * 9}  {'-' * 28}")
+    rows = []
+    for r in REGION_ORDER:
+        members = [s for s in ranked if s.region == r]
+        if not members:
+            continue
+        best = max(members, key=lambda x: x.final_log)
+        rows.append((float(np.median([s.pct for s in members])), r,
+                     len(members), best))
+    for med, r, n, best in sorted(rows, reverse=True):
+        print(f"{r:<10}  {n:>7}  {med:>+8.2f}%  {best.pct:>+8.2f}%  "
+              f"{best.name:<28}")
+
+
+def plot_by_region(series, start, end, theme="dark", out=None, show=True,
+                   currency_note=False, title=None, usd=False):
+    """Small multiples: one panel per region, every index labelled.
+
+    The combined chart answers "how do regions compare"; this answers "who leads
+    inside each region", which 23 lines on one axis cannot show. Panels share
+    both axes so heights are directly comparable across regions — the whole
+    point of the layout, and the reason not to let each panel autoscale.
+    """
+    if not series:
+        print("No data fetched — nothing to plot.")
+        return
+
+    t = THEMES[theme]
+    present = [r for r in REGION_ORDER if any(s.region == r for s in series)]
+    n = len(present)
+    # Prefer a layout that leaves the fewest empty cells: 5 regions in 3 columns
+    # strands two panels on a sparse second row, where 2 columns fills evenly.
+    ncol = 1 if n == 1 else (2 if n <= 2 else min(3, n))
+    if n % ncol and n % 2 == 0:
+        ncol = 2
+    nrow = -(-n // ncol)  # ceil
+
+    # Extra height for the figure header so it never lands on a panel title.
+    header_in = 1.15
+    fig, axes = plt.subplots(nrow, ncol,
+                             figsize=(15, header_in + 3.6 * nrow),
+                             facecolor=t["surface"], sharex=True, sharey=True,
+                             squeeze=False)
+    flat = [a for row in axes for a in row]
+
+    allv = np.concatenate([s.cum_log for s in series]) * 100.0
+    pad = (allv.max() - allv.min()) * 0.08 or 1.0
+    ylim = (allv.min() - pad, allv.max() + pad)
+
+    for ax, region in zip(flat, present):
+        ax.set_facecolor(t["surface"])
+        members = sorted([s for s in series if s.region == region],
+                         key=lambda x: x.final_log, reverse=True)
+        hue_key, dashes = REGION_STYLE[region]
+        colour = t["hues"][hue_key]
+
+        # Within a panel the region hue is fixed, so rank is carried by
+        # opacity and weight: the leader is opaque and thick, the rest recede.
+        for i, s in enumerate(members):
+            lead = i == 0
+            line, = ax.plot(
+                s.index, s.cum_log * 100.0, color=colour,
+                linewidth=2.4 if lead else 1.3,
+                alpha=1.0 if lead else max(0.32, 0.78 - i * 0.07),
+                solid_capstyle="round", zorder=3 if lead else 2,
+            )
+            if dashes:
+                line.set_dashes(dashes)
+
+        ax.axhline(0, color=t["axis"], linewidth=0.9, zorder=1)
+        ax.set_ylim(*ylim)
+
+        # Every index named, ranked, with its return — readable because a panel
+        # holds at most nine lines instead of twenty-three.
+        #
+        # Place the list in the emptiest corner, measured rather than assumed:
+        # score each of the four corners by how many plotted points fall inside
+        # it, and take the lowest. Anchoring to a fixed corner collided with
+        # Asia's curves, which fill both vertical halves.
+        xs = np.concatenate([mdates.date2num(s.index) for s in members])
+        ys = np.concatenate([s.cum_log * 100.0 for s in members])
+        x0, x1 = xs.min(), xs.max()
+        xfrac = (xs - x0) / (x1 - x0) if x1 > x0 else np.zeros_like(xs)
+        yfrac = ((ys - ylim[0]) / (ylim[1] - ylim[0])
+                 if ylim[1] > ylim[0] else np.zeros_like(ys))
+
+        # Corner boxes sized to the label block: wide enough for the names,
+        # tall enough for one row per member.
+        bw = 0.46
+        bh = min(0.17 + 0.062 * len(members), 0.62)
+        corners = [
+            (0.985, 0.97, "right", "top", (1 - bw, 1.0), (1 - bh, 1.0)),
+            (0.985, 0.03, "right", "bottom", (1 - bw, 1.0), (0.0, bh)),
+            (0.015, 0.97, "left", "top", (0.0, bw), (1 - bh, 1.0)),
+            (0.015, 0.03, "left", "bottom", (0.0, bw), (0.0, bh)),
+        ]
+        best_corner, best_hits = corners[0], None
+        for c in corners:
+            _, _, _, _, (xa, xb), (ya, yb) = c
+            hits = int(np.sum((xfrac >= xa) & (xfrac <= xb) &
+                              (yfrac >= ya) & (yfrac <= yb)))
+            if best_hits is None or hits < best_hits:
+                best_corner, best_hits = c, hits
+        ax_x, ax_y, ha, va, _, _ = best_corner
+
+        lines = [f"{i}. {s.name.split(' (')[0]}  {s.pct:+.1f}%"
+                 for i, s in enumerate(members, 1)]
+        ax.text(ax_x, ax_y, "\n".join(lines), transform=ax.transAxes,
+                va=va, ha=ha, fontsize=7.6, linespacing=1.55,
+                color=t["ink_soft"], zorder=5,
+                bbox=dict(boxstyle="round,pad=0.5", facecolor=t["surface"],
+                          edgecolor=t["grid"], linewidth=0.6, alpha=0.93))
+
+        med = float(np.median([s.pct for s in members]))
+        ax.set_title(f"{region}   ·   {len(members)} market"
+                     f"{'s' if len(members) != 1 else ''}   ·   median {med:+.1f}%",
+                     fontsize=10.5, color=t["ink"], loc="left", pad=8)
+
+        ax.grid(True, axis="y", color=t["grid"], linewidth=0.7)
+        ax.set_axisbelow(True)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(t["axis"])
+        ax.tick_params(colors=t["muted"], labelsize=8.5, length=0)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:+.0f}%"))
+        loc = mdates.AutoDateLocator(minticks=3, maxticks=6)
+        ax.xaxis.set_major_locator(loc)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+
+    # Blank out any unused cell rather than leaving empty axes.
+    for ax in flat[n:]:
+        ax.set_visible(False)
+
+    # Header sits in its own reserved band, measured in inches so it holds at
+    # any panel count.
+    fig_h = header_in + 3.6 * nrow
+    basis = "in USD" if usd else "in Local Currency"
+    fig.text(0.055, 1 - 0.42 / fig_h,
+             title or f"Cumulative Log Returns by Region, {basis}",
+             fontsize=16, color=t["ink"], fontweight="semibold",
+             va="center", ha="left")
+    fig.text(0.055, 1 - 0.72 / fig_h,
+             f"{start} to {end}   ·   shared axes, so panel heights compare "
+             f"directly   ·   leader highlighted in each region",
+             fontsize=9, color=t["muted"], va="center", ha="left")
+
+    if currency_note:
+        note = ("Converted to USD at daily spot rates, so returns include "
+                "currency moves." if usd else
+                "Each index is in its own local currency.")
+        fig.text(0.055, 0.14 / fig_h, note, fontsize=8, color=t["muted"],
+                 va="center", style="italic")
+
+    fig.subplots_adjust(left=0.055, right=0.985,
+                        top=1 - header_in / fig_h,
+                        bottom=0.42 / fig_h,
+                        hspace=0.28, wspace=0.07)
+
+    if out:
+        fig.savefig(out, dpi=120, facecolor=t["surface"])
+        print(f"\nSaved chart -> {out}")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 def plot(series, start, end, theme="dark", out=None, show=True,
@@ -454,8 +722,12 @@ def plot(series, start, end, theme="dark", out=None, show=True,
     # otherwise visually identical, and mistaking one for the other misreads
     # every number on the chart.
     basis = "in USD" if usd else "in Local Currency"
+    # Name the actual scope: saying "Global Indices" on a chart filtered to one
+    # region would misdescribe it.
+    regions = [r for r in REGION_ORDER if any(s.region == r for s in ranked)]
+    scope = " + ".join(regions) if len(regions) <= 2 else "Global Indices"
     fig.text(0.055, 0.955,
-             title or f"Cumulative Log Returns — Global Indices, {basis}",
+             title or f"Cumulative Log Returns — {scope}, {basis}",
              fontsize=17, color=t["ink"], fontweight="semibold", va="bottom")
     sub = (f"{start} to {end}   ·   {len(ranked)} markets   ·   "
            f"best {best.pct:+.1f}% {best.name.split(' (')[0]}   ·   "
@@ -472,23 +744,26 @@ def plot(series, start, end, theme="dark", out=None, show=True,
                  fontsize=8, color=t["muted"], va="bottom", style="italic")
 
     # --- region key -------------------------------------------------------
+    # Only when colour is actually distinguishing something: with one region
+    # every line shares a hue, so a one-entry key is noise (the title says it).
     present = [r for r in REGION_ORDER if any(s.region == r for s in ranked)]
-    handles = []
-    for r in present:
-        hue_key, dashes = REGION_STYLE[r]
-        h = Line2D([], [], color=t["hues"][hue_key], linewidth=2.0,
-                   label=r, solid_capstyle="round")
-        if dashes:
-            h.set_dashes(dashes)
-        handles.append(h)
-    # Placed above the plot, in a single row, so it never covers the data.
-    legend = ax.legend(
-        handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.005),
-        frameon=False, fontsize=9, labelcolor=t["ink_soft"],
-        handlelength=2.4, borderpad=0.0, columnspacing=1.8,
-        ncol=len(handles),
-    )
-    legend.set_zorder(5)
+    if len(present) > 1:
+        handles = []
+        for r in present:
+            hue_key, dashes = REGION_STYLE[r]
+            h = Line2D([], [], color=t["hues"][hue_key], linewidth=2.0,
+                       label=r, solid_capstyle="round")
+            if dashes:
+                h.set_dashes(dashes)
+            handles.append(h)
+        # Placed above the plot, in a single row, so it never covers the data.
+        legend = ax.legend(
+            handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.005),
+            frameon=False, fontsize=9, labelcolor=t["ink_soft"],
+            handlelength=2.4, borderpad=0.0, columnspacing=1.8,
+            ncol=len(handles),
+        )
+        legend.set_zorder(5)
 
     fig.subplots_adjust(left=0.055, right=0.775, top=0.855, bottom=0.085)
 
@@ -520,6 +795,12 @@ def main(argv=None):
     p.add_argument("--currency-note", action="store_true",
                    help="stamp the currency-basis caveat on the figure")
     p.add_argument("--title", help="override the chart title")
+    p.add_argument("--by-region", action="store_true",
+                   help="small multiples: one panel per region with every index "
+                        "labelled, instead of all markets on one axis")
+    p.add_argument("--region", action="append", metavar="NAME",
+                   help=f"chart only this region (repeatable). "
+                        f"One of: {', '.join(REGION_ORDER)}")
     p.add_argument("--label-count", type=int, default=3, metavar="N",
                    help="direct-label the top and bottom N markets (default: 3)")
     p.add_argument("--no-table", action="store_true",
@@ -533,31 +814,61 @@ def main(argv=None):
     if args.label_count < 0:
         raise SystemExit("--label-count must be 0 or greater.")
 
+    # Resolve --region case-insensitively, then filter the universe *before*
+    # fetching so a narrowed run also costs fewer requests.
+    universe = INDICES
+    if args.region:
+        lookup = {r.lower(): r for r in REGION_ORDER}
+        wanted = []
+        for raw in args.region:
+            key = lookup.get(raw.strip().lower())
+            if key is None:
+                raise SystemExit(
+                    f"--region {raw!r} is not a region. "
+                    f"Choose from: {', '.join(REGION_ORDER)}")
+            if key not in wanted:
+                wanted.append(key)
+        universe = {k: v for k, v in INDICES.items() if v[1] in wanted}
+        if not universe:
+            raise SystemExit(f"No markets in {', '.join(wanted)}.")
+
     start, end = resolve_window(args)
 
     fx, fx_failed = {}, []
     if args.usd:
-        currencies = [c for _, _, c in INDICES.values()]
+        currencies = [c for _, _, c in universe.values()]
         if not args.quiet:
             n = len({c for c in currencies if c != "USD"})
             print(f"Fetching {n} FX rates  ({start} -> {end})")
         fx, fx_failed = fetch_fx(currencies, start, end, quiet=args.quiet)
 
     if not args.quiet:
-        print(f"Fetching {len(INDICES)} tickers  ({start} -> {end})")
+        print(f"Fetching {len(universe)} tickers  ({start} -> {end})")
 
-    series, failed = fetch(INDICES, start, end, quiet=args.quiet,
+    series, failed = fetch(universe, start, end, quiet=args.quiet,
                            to_usd=args.usd, fx=fx)
 
     if not args.quiet and series:
-        print(f"\nFetched {len(series)} of {len(INDICES)}.")
+        print(f"\nFetched {len(series)} of {len(universe)}.")
 
     if series and not args.no_table:
-        print_table(sorted(series, key=lambda s: s.final_log, reverse=True))
+        print_table(sorted(series, key=lambda s: s.final_log, reverse=True),
+                    by_region=args.by_region)
 
-    plot(series, start, end, theme=args.theme, out=args.out,
-         show=not args.no_show, currency_note=args.currency_note,
-         title=args.title, n_label=args.label_count, usd=args.usd)
+    if args.by_region:
+        plot_by_region(series, start, end, theme=args.theme, out=args.out,
+                       show=not args.no_show,
+                       currency_note=args.currency_note,
+                       title=args.title, usd=args.usd)
+    else:
+        # A narrowed run has few enough lines to label them all, so lift the
+        # cap rather than labelling only three of six.
+        n_label = args.label_count
+        if args.region and series:
+            n_label = max(n_label, len(series))
+        plot(series, start, end, theme=args.theme, out=args.out,
+             show=not args.no_show, currency_note=args.currency_note,
+             title=args.title, n_label=n_label, usd=args.usd)
 
     if fx_failed:
         print("\nFX rates unavailable:")

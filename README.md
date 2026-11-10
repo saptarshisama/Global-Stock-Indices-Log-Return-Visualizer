@@ -43,22 +43,77 @@ Design decisions that are doing real work:
 
 - **Colour encodes region, not rank.** Lines are grouped Americas / Europe / Asia / Oceania / Crypto, so regional clustering is visible at a glance — that is the actual story in the data, and colouring by rank would have wasted the channel on information the y-position already carries.
 - **Composite encoding — hue × line style.** Five regions is one class more than colour alone can carry safely. The three hues used are the only trio that clears the all-pairs colour-vision gate in both themes (worst-case CVD ΔE 9.4 dark / 9.2 light); adding a fourth or fifth hue drops some pair to ΔE ≈ 1.9, which is indistinguishable to a protanope. So the last two regions reuse hues and separate by dash pattern. **The encoding therefore survives colourblindness and black-and-white printing.**
-- **Only the extremes are labelled.** With 23 markets, most finish within a few percent of each other; direct-labelling all of them produces a wall of text with crossing leader lines that cannot be traced back to a line. The leaders and laggards get callouts (`--label-count N`), and the full ranking goes to the printed table.
+- **Only the extremes are labelled on the combined chart.** With 23 markets, most finish within a few percent of each other; direct-labelling all of them produces a wall of text with crossing leader lines that cannot be traced back to a line. The leaders and laggards get callouts (`--label-count N`), the full ranking goes to the printed table, and `--by-region` / `--region` label every index once there are few enough to do so legibly.
+- **Panel labels are placed, not guessed.** In `--by-region`, each panel's index list goes in whichever corner contains the fewest plotted points, measured per panel. A fixed corner collided with Asia's curves, which fill both vertical halves.
 - **The peak is named.** The highest point on the chart draws the eye first. If it belongs to a line that ends far below it, the reader has no way to identify it — so it is annotated where it peaks.
 - **Both themes are selected, not flipped.** The light and dark hues are separate steps validated against their own surface, not an automatic inversion.
 
-Every value is reachable without reading colour, via the ranked table:
+---
+
+## Comparing individual markets
+
+The combined chart shows how regions move together. To compare *countries* — who leads inside each region, who is actually outperforming — there are three views.
+
+### `--by-region`: small multiples
+
+One panel per region, every index named and ranked with its return. Panels share both axes, so their heights compare directly: Americas and Europe are visibly tight bands while Asia sprawls from +42% to −42%.
+
+![One panel per region, each index labelled](assets/chart-by-region.png)
+
+```bash
+python index_comparison.py --by-region
+```
+
+### `--region`: drill into one
+
+Charts a single region full-size, and because there are few enough lines, **every index gets its own end label** instead of just the top and bottom three.
+
+```bash
+python index_comparison.py --region Asia
+```
+
+Repeatable and case-insensitive, so `--region asia --region europe` compares two regions head to head.
+
+### The key table
+
+Printed after every run. This is where "who is outperforming" actually gets answered, because raw return alone is misleading:
 
 ```
-  #  Market                         Region        Return
----  -----------------------------  ---------  ---------
-  1  TAIEX (Taiwan)                 Asia         +41.95%
-  2  KOSPI (South Korea)            Asia         +16.46%
-  3  TSX Composite (Canada)         Americas     +14.31%
-...
- 22  BTC/USD (Bitcoin)              Crypto       -15.22%
- 23  Jakarta Composite (Indonesia)  Asia         -42.00%
+AMERICAS  (6 markets)
+  #  Market                  Region      In-rgn     Return       Vol      MaxDD   Ret/Vol   Bars
+---  ----------------------  ---------  -------  ---------  --------  ---------  --------  -----
+  1  TSX Composite (Canada)  Americas      1/6*    +14.31%      14.3%     -9.33%     +1.00    215
+  2  IPC (Mexico)            Americas       2/6    +12.03%      17.0%    -11.49%     +0.71    215
+  3  S&P 500 (USA)           Americas       3/6    +10.08%      14.0%     -9.10%     +0.72    215
 ```
+
+| Column | Meaning |
+|---|---|
+| **In-rgn** | Rank within its own region. `*` marks that region's leader. |
+| **Return** | Total simple return over the window. |
+| **Vol** | Annualised volatility — standard deviation of daily log returns × √252. |
+| **MaxDD** | Worst peak-to-trough fall inside the window. |
+| **Ret/Vol** | Return per unit of volatility. A crude risk-adjusted ranking, **not** a Sharpe ratio — there is no risk-free rate here. |
+| **Bars** | Trading days actually fetched. Varies by holiday calendar. |
+
+Two things this surfaces that the ranking hides:
+
+- **KOSPI's +16.5% came with 60.6% volatility and a −44.9% drawdown** (Ret/Vol 0.27). TSX earned a similar +14.3% at 14.3% vol (Ret/Vol 1.00). Same ballpark return, very different ride.
+- **Within Europe, IBEX edges SMI on return** (+12.86% vs +12.82%) but SMI did it at 12.8% vol against IBEX's 17.6%.
+
+`--by-region` groups the table by region with per-region rankings. A region summary always prints last:
+
+```
+REGION      Markets     Median       Best  Leader
+----------  -------  ---------  ---------  ----------------------------
+Americas          6     +9.38%    +14.31%  TSX Composite (Canada)
+Europe            6     +7.70%    +12.86%  IBEX 35 (Spain)
+Oceania           1     +3.46%     +3.46%  ASX 200 (Australia)
+Asia              9     -3.18%    +41.95%  TAIEX (Taiwan)
+Crypto            1    -15.22%    -15.22%  BTC/USD (Bitcoin)
+```
+
+Sorted by median, which answers the regional question properly: **the Americas lead on median (+9.38%) even though Asia holds the single best market.** Asia's median is negative — one star and a long tail of losers.
 
 ---
 
@@ -101,7 +156,9 @@ Saves a PNG without opening a window — use this on a server or in CI.
 | `--usd` | Convert every index to USD at daily spot rates before computing returns. |
 | `--currency-note` | Stamp the currency-basis caveat on the figure. |
 | `--title TEXT` | Override the chart title. |
-| `--label-count N` | Direct-label the top and bottom N markets. Default 3; `0` draws no end labels. |
+| `--by-region` | Small multiples: one panel per region, every index labelled. Also groups the table. |
+| `--region NAME` | Chart only this region. Repeatable, case-insensitive. |
+| `--label-count N` | Direct-label the top and bottom N markets. Default 3; `0` draws no end labels. Lifted automatically when `--region` narrows the set. |
 | `--no-table` | Skip the ranked table. |
 | `--quiet` | Suppress per-ticker progress output. |
 
@@ -113,6 +170,10 @@ python index_comparison.py --period ytd --end 2026-11-10 --theme dark --out asse
 
 ```bash
 python index_comparison.py --period ytd --end 2026-11-10 --usd --theme dark --out assets/chart-usd-dark.png --no-show --currency-note
+```
+
+```bash
+python index_comparison.py --period ytd --end 2026-11-10 --by-region --out assets/chart-by-region.png --no-show --currency-note
 ```
 
 ---
