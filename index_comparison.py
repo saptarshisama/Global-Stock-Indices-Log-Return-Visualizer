@@ -53,38 +53,91 @@ except ImportError:  # pragma: no cover - dependency guard
 #   Tadawul All Shares (Saudi) '^TASI.SR' — same symptom, returns zero rows for
 #       every window tested. Needs the Tadawul site or another vendor.
 # Both would otherwise fail silently into the "failed" list on every run.
-INDICES: dict[str, tuple[str, str, str]] = {
-    # Americas
-    "S&P 500 (USA)": ("^GSPC", "Americas", "USD"),
-    "Nasdaq Composite (USA)": ("^IXIC", "Americas", "USD"),
-    "Dow Jones (USA)": ("^DJI", "Americas", "USD"),
-    "TSX Composite (Canada)": ("^GSPTSE", "Americas", "CAD"),
-    "Bovespa (Brazil)": ("^BVSP", "Americas", "BRL"),
-    "IPC (Mexico)": ("^MXX", "Americas", "MXN"),
-    # Europe
-    "DAX 40 (Germany)": ("^GDAXI", "Europe", "EUR"),
-    "FTSE 100 (UK)": ("^FTSE", "Europe", "GBP"),
-    "CAC 40 (France)": ("^FCHI", "Europe", "EUR"),
-    "Euro Stoxx 50 (Eurozone)": ("^STOXX50E", "Europe", "EUR"),
-    "SMI (Switzerland)": ("^SSMI", "Europe", "CHF"),
-    "IBEX 35 (Spain)": ("^IBEX", "Europe", "EUR"),
-    # Asia
-    "Nifty 50 (India)": ("^NSEI", "Asia", "INR"),
-    "Hang Seng (Hong Kong)": ("^HSI", "Asia", "HKD"),
-    "SSE Composite (China)": ("000001.SS", "Asia", "CNY"),
-    "Nikkei 225 (Japan)": ("^N225", "Asia", "JPY"),
-    "KOSPI (South Korea)": ("^KS11", "Asia", "KRW"),
-    "TAIEX (Taiwan)": ("^TWII", "Asia", "TWD"),
-    "Jakarta Composite (Indonesia)": ("^JKSE", "Asia", "IDR"),
-    "STI (Singapore)": ("^STI", "Asia", "SGD"),
-    "FTSE Bursa KLCI (Malaysia)": ("^KLSE", "Asia", "MYR"),
-    # Oceania
-    "ASX 200 (Australia)": ("^AXJO", "Oceania", "AUD"),
-    # Crypto benchmark — already quoted in USD
-    "BTC/USD (Bitcoin)": ("BTC-USD", "Crypto", "USD"),
+# The fourth field is a tier: 1 = the twenty headline indices a global market
+# report would always carry, 2 = the next ten, 3 = everything else. Tiers are
+# curated by market significance, deliberately NOT by performance in the window:
+# "Top 20" must mean the same set every run, or two runs cannot be compared.
+# Every ticker here was confirmed to return data; see EXCLUDED below for the
+# ones that did not.
+INDICES: dict[str, tuple[str, str, str, int]] = {
+    # --- Americas ---------------------------------------------------------
+    "S&P 500 (USA)": ("^GSPC", "Americas", "USD", 1),
+    "Nasdaq Composite (USA)": ("^IXIC", "Americas", "USD", 1),
+    "Dow Jones (USA)": ("^DJI", "Americas", "USD", 1),
+    "Russell 2000 (USA)": ("^RUT", "Americas", "USD", 2),
+    "S&P MidCap 400 (USA)": ("^SP400", "Americas", "USD", 3),
+    "NYSE Composite (USA)": ("^NYA", "Americas", "USD", 3),
+    "TSX Composite (Canada)": ("^GSPTSE", "Americas", "CAD", 1),
+    "Bovespa (Brazil)": ("^BVSP", "Americas", "BRL", 1),
+    "IPC (Mexico)": ("^MXX", "Americas", "MXN", 2),
+    # --- Europe -----------------------------------------------------------
+    "DAX 40 (Germany)": ("^GDAXI", "Europe", "EUR", 1),
+    "FTSE 100 (UK)": ("^FTSE", "Europe", "GBP", 1),
+    "CAC 40 (France)": ("^FCHI", "Europe", "EUR", 1),
+    "Euro Stoxx 50 (Eurozone)": ("^STOXX50E", "Europe", "EUR", 1),
+    "STOXX Europe 600": ("^STOXX", "Europe", "EUR", 1),
+    "SMI (Switzerland)": ("^SSMI", "Europe", "CHF", 1),
+    "IBEX 35 (Spain)": ("^IBEX", "Europe", "EUR", 2),
+    "FTSE MIB (Italy)": ("FTSEMIB.MI", "Europe", "EUR", 2),
+    "AEX (Netherlands)": ("^AEX", "Europe", "EUR", 2),
+    "BEL 20 (Belgium)": ("^BFX", "Europe", "EUR", 3),
+    "OMX Stockholm 30 (Sweden)": ("^OMX", "Europe", "SEK", 3),
+    "OMX Copenhagen 25 (Denmark)": ("^OMXC25", "Europe", "DKK", 3),
+    "OMX Helsinki 25 (Finland)": ("^OMXH25", "Europe", "EUR", 3),
+    "ATX (Austria)": ("^ATX", "Europe", "EUR", 3),
+    "PSI (Portugal)": ("^BVLG", "Europe", "EUR", 3),
+    "Athex Composite (Greece)": ("GD.AT", "Europe", "EUR", 3),
+    "BIST 100 (Turkey)": ("XU100.IS", "Europe", "TRY", 3),
+    # --- Asia -------------------------------------------------------------
+    "Nikkei 225 (Japan)": ("^N225", "Asia", "JPY", 1),
+    "SSE Composite (China)": ("000001.SS", "Asia", "CNY", 1),
+    "Shenzhen Component (China)": ("399001.SZ", "Asia", "CNY", 2),
+    "Hang Seng (Hong Kong)": ("^HSI", "Asia", "HKD", 1),
+    "Hang Seng China Ent (HK)": ("^HSCE", "Asia", "HKD", 2),
+    "Nifty 50 (India)": ("^NSEI", "Asia", "INR", 1),
+    "BSE Sensex (India)": ("^BSESN", "Asia", "INR", 1),
+    "Nifty 100 (India)": ("^CNX100", "Asia", "INR", 3),
+    "Nifty Bank (India)": ("^NSEBANK", "Asia", "INR", 3),
+    "KOSPI (South Korea)": ("^KS11", "Asia", "KRW", 1),
+    "KOSDAQ (South Korea)": ("^KQ11", "Asia", "KRW", 3),
+    "TAIEX (Taiwan)": ("^TWII", "Asia", "TWD", 1),
+    "STI (Singapore)": ("^STI", "Asia", "SGD", 2),
+    "Jakarta Composite (Indonesia)": ("^JKSE", "Asia", "IDR", 2),
+    "FTSE Bursa KLCI (Malaysia)": ("^KLSE", "Asia", "MYR", 3),
+    "TA-125 (Israel)": ("^TA125.TA", "Asia", "ILS", 3),
+    # --- Oceania ----------------------------------------------------------
+    "ASX 200 (Australia)": ("^AXJO", "Oceania", "AUD", 1),
+    "NZX 50 (New Zealand)": ("^NZ50", "Oceania", "NZD", 3),
+    # --- Africa -----------------------------------------------------------
+    "JSE Top 40 (South Africa)": ("^JN0U.JO", "Africa", "USD", 2),
+    # --- Crypto benchmarks — already quoted in USD ------------------------
+    "BTC/USD (Bitcoin)": ("BTC-USD", "Crypto", "USD", 1),
+    "ETH/USD (Ethereum)": ("ETH-USD", "Crypto", "USD", 3),
 }
 
-REGION_ORDER = ["Americas", "Europe", "Asia", "Oceania", "Crypto"]
+# Tried and rejected: Yahoo returns no rows for these over any window tested.
+# Kept as a record so they are not re-added on a hunch.
+#   IMOEX.ME (MOEX, Russia)        — delisted from Yahoo after 2022 sanctions
+#   ^TASI.SR / ^TASI (Tadawul)     — zero rows
+#   000300.SS (CSI 300, China)     — zero rows; ^SSE/Shenzhen cover China
+#   ^TOPX / ^TOPIX (Japan)         — zero rows. The 1306.T ETF proxy returns
+#       data but carries an unadjusted 10:1 reverse split (36.4 -> 381.9
+#       overnight, reported as +948%), so it is rejected by the split guard.
+#   ^SET.BK (Thailand), PSEI.PS (Philippines), ^VNINDEX (Vietnam)
+#   ^WIG20 / WIG20.WA (Poland), ^BUX (Hungary), PX.PR (Czechia)
+#   ^OSEAX (Norway), ^IPSA (Chile), ^COLCAP (Colombia)
+#   ^CASE30 (Egypt), ^DFMGI (UAE), ^QSI (Qatar)
+#   ^MERV (Argentina)              — only 64 rows and no currency reported
+
+REGION_ORDER = ["Americas", "Europe", "Asia", "Oceania", "Africa", "Crypto"]
+
+# Selection presets. Tier 1 is twenty indices, tier 1+2 is thirty, and "all" is
+# everything that resolves — which is what the menu offers.
+SELECTIONS = {
+    "top20": ("Top 20 across regions", lambda t: t <= 1),
+    "top30": ("Top 30 across regions", lambda t: t <= 2),
+    "all": ("All major indices", lambda t: True),
+}
 
 # Yahoo FX convention: "XXXUSD=X" quotes 1 XXX in USD, so converting a
 # local-currency level to USD is a multiplication. USD needs no pair.
@@ -105,6 +158,7 @@ REGION_STYLE: dict[str, tuple[str, tuple]] = {
     "Europe": ("orange", ()),
     "Asia": ("aqua", ()),
     "Oceania": ("blue", (6, 2)),
+    "Africa": ("aqua", (6, 2)),
     "Crypto": ("orange", (1, 1.6)),
 }
 
@@ -261,6 +315,15 @@ def resolve_window(args) -> tuple[str, str]:
     return start_dt.strftime("%Y-%m-%d"), end
 
 
+# A single-day move this large is not a market move. Broad indices do not gain
+# or lose two thirds of their value overnight; in practice it means a split or
+# redenomination that auto_adjust did not back out, and the fake jump then
+# poisons volatility, drawdown and the whole cumulative path.
+# (Found with 1306.T, which jumped 36.4 -> 381.9 on an unadjusted 10:1 reverse
+# split — reported as +948% in a day.)
+MAX_DAILY_LOG_MOVE = 0.60  # ~ -45% to +82% in one session
+
+
 def _close_series(ticker, start, end):
     """Fetch one ticker's adjusted close. Returns (series, None) or (None, reason)."""
     try:
@@ -270,6 +333,11 @@ def _close_series(ticker, start, end):
     close = df["Close"].dropna() if "Close" in df else None
     if close is None or len(close) < 2:
         return None, "no price data"
+
+    moves = np.abs(np.diff(np.log(close.to_numpy(dtype=float))))
+    if moves.size and moves.max() > MAX_DAILY_LOG_MOVE:
+        pct = (np.exp(moves.max()) - 1) * 100
+        return None, f"unadjusted split? {pct:+.0f}% in one day"
     return close, None
 
 
@@ -308,7 +376,8 @@ def fetch(indices, start, end, quiet=False, to_usd=False, fx=None):
     out, failed = [], []
     total = len(indices)
     fx = fx or {}
-    for i, (name, (ticker, region, currency)) in enumerate(indices.items(), 1):
+    for i, (name, (ticker, region, currency, _tier)) in enumerate(
+            indices.items(), 1):
         if not quiet:
             print(f"  [{i:>2}/{total}] {name:<32} {ticker:<12}", end="", flush=True)
 
@@ -807,6 +876,176 @@ def plot(series, start, end, theme="dark", out=None, show=True,
 
 
 # --------------------------------------------------------------------------
+# Interactive mode
+# --------------------------------------------------------------------------
+# Running with no arguments opens a menu rather than assuming a view. Option 1
+# is the quick default, so the common case is still one keypress; every other
+# prompt has a default in brackets that Enter accepts.
+# Plain ASCII: the Windows console defaults to cp1252, where box-drawing
+# characters raise UnicodeEncodeError and crash the menu before it draws.
+RULE = "-" * 64
+
+
+def _ask(prompt, options, default_key):
+    """Numbered menu. Returns the chosen key. Enter accepts the default."""
+    print(f"\n{prompt}")
+    keys = list(options)
+    for i, k in enumerate(keys, 1):
+        label, hint = options[k]
+        mark = "  (default)" if k == default_key else ""
+        print(f"  {i}. {label}{mark}")
+        if hint:
+            print(f"     {hint}")
+    while True:
+        try:
+            raw = input(
+                f"\n  Choose 1-{len(keys)} [{keys.index(default_key) + 1}]: ").strip()
+        except EOFError:
+            # stdin ran out (piped input, closed terminal): take the default
+            # rather than dying with a traceback.
+            print()
+            return default_key
+        if not raw:
+            return default_key
+        if raw.isdigit() and 1 <= int(raw) <= len(keys):
+            return keys[int(raw) - 1]
+        print("  Not a valid choice.")
+
+
+def _input(prompt, fallback=""):
+    """input() that treats end-of-stdin as 'accept the default'."""
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        print()
+        return fallback
+
+
+def _ask_yes_no(prompt, default=False):
+    d = "Y/n" if default else "y/N"
+    while True:
+        raw = _input(f"  {prompt} [{d}]: ").lower()
+        if not raw:
+            return default
+        if raw in ("y", "yes"):
+            return True
+        if raw in ("n", "no"):
+            return False
+        print("  Answer y or n.")
+
+
+def _ask_date(prompt, default):
+    """Ask for a YYYY-MM-DD date, re-prompting until valid."""
+    while True:
+        raw = _input(f"  {prompt} [{default}]: ")
+        if not raw:
+            return default
+        try:
+            datetime.strptime(raw, "%Y-%m-%d")
+            return raw
+        except ValueError:
+            print("  Use the form YYYY-MM-DD, e.g. 2026-01-15.")
+
+
+def run_interactive(args):
+    """Fill `args` by asking. Returns args, or None if the user quits."""
+    tier_counts = {k: sum(1 for v in INDICES.values() if pred(v[3]))
+                   for k, (_lbl, pred) in SELECTIONS.items()}
+
+    print(f"\n{RULE}")
+    print("  GLOBAL MARKET ANALYSIS - cumulative log returns")
+    print(f"  {len(INDICES)} indices across {len(REGION_ORDER)} regions")
+    print(RULE)
+
+    start_choice = _ask(
+        "How do you want to start?",
+        {
+            "quick": ("Quick default",
+                      "Year to date / Top 20 / local currency / per-region panels"),
+            "custom": ("Customise everything", "Answer a few questions"),
+            "quit": ("Quit", ""),
+        },
+        "quick")
+
+    if start_choice == "quit":
+        return None
+
+    if start_choice == "quick":
+        args.period, args.selection, args.usd = "ytd", "top20", False
+        print("\n  Running the quick default...")
+        return args
+
+    # --- which markets ----------------------------------------------------
+    args.selection = _ask(
+        "Which indices?",
+        {k: (f"{lbl} ({tier_counts[k]} indices)",
+             "slower to fetch" if tier_counts[k] > 30 else "")
+         for k, (lbl, _p) in SELECTIONS.items()},
+        "top20")
+
+    region_choice = _ask(
+        "Limit to a region?",
+        {"all": ("All regions", "")} |
+        {r.lower(): (r, "") for r in REGION_ORDER},
+        "all")
+    args.region = None if region_choice == "all" else [region_choice]
+
+    # --- time window ------------------------------------------------------
+    window = _ask(
+        "Over what period?",
+        {"ytd": ("Year to date", ""), "1m": ("Last month", ""),
+         "3m": ("Last 3 months", ""), "6m": ("Last 6 months", ""),
+         "1y": ("Last year", ""), "custom": ("Exact dates", "")},
+        "ytd")
+    if window == "custom":
+        today = date.today().strftime("%Y-%m-%d")
+        args.end = _ask_date("End date", today)
+        default_start = f"{datetime.strptime(args.end, '%Y-%m-%d').year}-01-01"
+        args.start = _ask_date("Start date", default_start)
+    else:
+        args.period = window
+
+    # --- currency basis ---------------------------------------------------
+    basis = _ask(
+        "Which currency basis?",
+        {"local": ("Local currency",
+                   "How each market did at home"),
+         "usd": ("Convert to USD",
+                 "What a USD-based investor earned, including currency moves")},
+        "local")
+    args.usd = basis == "usd"
+
+    # --- presentation -----------------------------------------------------
+    view = _ask(
+        "Which chart layout?",
+        {"panels": ("One panel per region", "Every index individually coloured"),
+         "combined": ("All on one axis", "Best for comparing whole regions")},
+        "panels")
+    args.combined = view == "combined"
+
+    args.theme = _ask("Colour theme?",
+                      {"dark": ("Dark", ""), "light": ("Light", "")}, "dark")
+
+    print()
+    if _ask_yes_no("Save the chart to a file as well?", False):
+        suggested = f"chart-{args.selection}{'-usd' if args.usd else ''}.png"
+        out = _input(f"  Filename [{suggested}]: ")
+        args.out = out or suggested
+
+    args.currency_note = True
+    return args
+
+
+def select_universe(selection, regions):
+    """Apply the tier preset and optional region filter."""
+    _label, pred = SELECTIONS[selection]
+    chosen = {k: v for k, v in INDICES.items() if pred(v[3])}
+    if regions:
+        chosen = {k: v for k, v in chosen.items() if v[1] in regions}
+    return chosen
+
+
+# --------------------------------------------------------------------------
 def main(argv=None):
     p = argparse.ArgumentParser(
         description="Compare cumulative log returns of global stock indices.")
@@ -833,10 +1072,30 @@ def main(argv=None):
     p.add_argument("--label-count", type=int, default=3, metavar="N",
                    help="with --combined, direct-label the top and bottom N "
                         "markets (default: 3)")
+    p.add_argument("--selection", default="top20", choices=list(SELECTIONS),
+                   help="which indices to include (default: top20)")
     p.add_argument("--no-table", action="store_true",
                    help="skip the ranked table printed after the chart")
     p.add_argument("--quiet", action="store_true", help="suppress progress output")
+    p.add_argument("--interactive", action="store_true",
+                   help="force the question-and-answer menu")
+    p.add_argument("--no-interactive", action="store_true",
+                   help="never prompt; use flags and defaults only")
     args = p.parse_args(argv)
+
+    # No arguments at all -> the menu, since that is the discoverable entry
+    # point. Any flag means the caller knows what they want, so stay quiet and
+    # non-interactive (scripts and CI rely on this).
+    interactive = args.interactive or (not argv and len(sys.argv) == 1)
+    if args.no_interactive:
+        interactive = False
+    if interactive and not sys.stdin.isatty():
+        # Piped or redirected stdin cannot answer prompts; fall back silently.
+        interactive = False
+
+    if interactive:
+        if run_interactive(args) is None:
+            return 0
 
     if args.no_show:
         matplotlib.use("Agg")
@@ -844,12 +1103,11 @@ def main(argv=None):
     if args.label_count < 0:
         raise SystemExit("--label-count must be 0 or greater.")
 
-    # Resolve --region case-insensitively, then filter the universe *before*
-    # fetching so a narrowed run also costs fewer requests.
-    universe = INDICES
+    # Resolve --region case-insensitively, then apply the tier preset and the
+    # region filter *before* fetching, so a narrowed run costs fewer requests.
+    wanted = []
     if args.region:
         lookup = {r.lower(): r for r in REGION_ORDER}
-        wanted = []
         for raw in args.region:
             key = lookup.get(raw.strip().lower())
             if key is None:
@@ -858,15 +1116,19 @@ def main(argv=None):
                     f"Choose from: {', '.join(REGION_ORDER)}")
             if key not in wanted:
                 wanted.append(key)
-        universe = {k: v for k, v in INDICES.items() if v[1] in wanted}
-        if not universe:
-            raise SystemExit(f"No markets in {', '.join(wanted)}.")
+
+    universe = select_universe(args.selection, wanted)
+    if not universe:
+        where = f" in {', '.join(wanted)}" if wanted else ""
+        raise SystemExit(
+            f"No markets{where} for selection {args.selection!r}. "
+            f"Try --selection all.")
 
     start, end = resolve_window(args)
 
     fx, fx_failed = {}, []
     if args.usd:
-        currencies = [c for _, _, c in universe.values()]
+        currencies = [c for _, _, c, _t in universe.values()]
         if not args.quiet:
             n = len({c for c in currencies if c != "USD"})
             print(f"Fetching {n} FX rates  ({start} -> {end})")
@@ -918,4 +1180,10 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        # Ctrl-C at a prompt or mid-download is a normal way to leave; a
+        # traceback here just looks like a crash.
+        print("\nCancelled.")
+        raise SystemExit(130)
